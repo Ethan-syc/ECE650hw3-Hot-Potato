@@ -6,19 +6,56 @@
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <utility>
 using namespace std;
 int main(int argc, char *argv[]) {
   if (argc < 3) {
     cout << "player <machine_name> <port_num>" << endl;
     return 1;
   }
-  const char *ringmaster_hostname = argv[1];
-  const char *ringmaster_port = argv[2];
-  int ringmaster_fd =
-      connect_to_ringmaster(ringmaster_hostname, ringmaster_port);
+  const char *hostname = argv[1];
+  const char *port = argv[2];
+  int ringmaster_fd = connect_to_server(hostname, port);
   int player_id = get_player_id(ringmaster_fd);
-  int my_listen_port = listen_and_send_hostinfo(ringmaster_fd);
-  while (1);
+  int my_listen_fd = listen_and_send_hostinfo(ringmaster_fd);
+  pair<string, string> neighbor_host_port_pair =
+      recv_neighbor_info(ringmaster_fd);
+  form_ring(my_listen_fd, neighbor_host_port_pair, player_id);
+}
+pair<string, string> recv_neighbor_info(int ringmaster_fd) {
+  char hostname[512];
+  char port[512];
+  recv_all(ringmaster_fd, hostname, sizeof(hostname));
+  recv_all(ringmaster_fd, port, sizeof(port));
+  cout << "my neighbor is " << hostname << " on port " << port << endl;
+  return make_pair(string(hostname), string(port));
+}
+int accept_from_client(int socket_fd) {
+  struct sockaddr_storage socket_addr;
+  socklen_t socket_addr_len = sizeof(socket_addr);
+  int new_fd =
+      accept(socket_fd, (struct sockaddr *)&socket_addr, &socket_addr_len);
+  if (new_fd == -1) {
+    cerr << "Error: cannot accept connection on socket" << endl;
+  }
+  cout << "accept succeed" << endl;
+  return new_fd;
+}
+pair<int, int> form_ring(int my_listen_fd,
+                         pair<string, string> neighbor_host_port_pair,
+                         int player_id) {
+  int status;
+  if (player_id == 0) {
+    int next_fd = connect_to_server(neighbor_host_port_pair.first.c_str(),
+                                    neighbor_host_port_pair.second.c_str());
+    cout << "connect succeed" << endl;
+    int prev_fd = accept_from_client(my_listen_fd);
+  } else {
+    int prev_fd = accept_from_client(my_listen_fd);
+    int next_fd = connect_to_server(neighbor_host_port_pair.first.c_str(),
+                                    neighbor_host_port_pair.second.c_str());
+    cout << "connect succeed" << endl;
+  }
 }
 int listen_and_send_hostinfo(int ringmaster_fd) {
   int status;
@@ -26,14 +63,15 @@ int listen_and_send_hostinfo(int ringmaster_fd) {
   struct addrinfo host_info;
   struct addrinfo *host_info_list;
   const char *hostname = NULL;
-  const char * my_listen_port;
+  const char *my_listen_port;
   memset(&host_info, 0, sizeof(host_info));
   host_info.ai_family = AF_UNSPEC;
   host_info.ai_socktype = SOCK_STREAM;
   host_info.ai_flags = AI_PASSIVE;
   for (int i = 5000; i < 6000; i++) {
     const char *try_listen_port = to_string(i).c_str();
-    status = getaddrinfo(hostname, try_listen_port, &host_info, &host_info_list);
+    status =
+        getaddrinfo(hostname, try_listen_port, &host_info, &host_info_list);
     if (status != 0) {
       cerr << "Error: cannot get address info for host" << endl;
       cerr << "  (" << hostname << "," << try_listen_port << ")" << endl;
@@ -77,8 +115,7 @@ int listen_and_send_hostinfo(int ringmaster_fd) {
   return socket_fd;
 }
 
-int connect_to_ringmaster(const char *ringmaster_hostname,
-                          const char *ringmaster_port) {
+int connect_to_server(const char *hostname, const char *port) {
   int status;
   int ringmaster_fd;
   struct addrinfo host_info;
@@ -88,12 +125,10 @@ int connect_to_ringmaster(const char *ringmaster_hostname,
   host_info.ai_family = AF_UNSPEC;
   host_info.ai_socktype = SOCK_STREAM;
 
-  status = getaddrinfo(ringmaster_hostname, ringmaster_port, &host_info,
-                       &host_info_list);
+  status = getaddrinfo(hostname, port, &host_info, &host_info_list);
   if (status != 0) {
     cerr << "Error: cannot get address info for host" << endl;
-    cerr << "  (" << ringmaster_hostname << "," << ringmaster_port << ")"
-         << endl;
+    cerr << "  (" << hostname << "," << port << ")" << endl;
     return -1;
   } // if
 
@@ -101,22 +136,23 @@ int connect_to_ringmaster(const char *ringmaster_hostname,
                          host_info_list->ai_protocol);
   if (ringmaster_fd == -1) {
     cerr << "Error: cannot create socket" << endl;
-    cerr << "  (" << ringmaster_hostname << "," << ringmaster_port << ")"
-         << endl;
+    cerr << "  (" << hostname << "," << port << ")" << endl;
     return -1;
   } // if
 
-  cout << "Connecting to " << ringmaster_hostname << " on port "
-       << ringmaster_port << "..." << endl;
+  cout << "Connecting to " << hostname << " on port " << port << "..." << endl;
+  while (1) {
+    status = connect(ringmaster_fd, host_info_list->ai_addr,
+                     host_info_list->ai_addrlen);
+    if (status == -1) {
+      cerr << "Error: cannot connect to socket" << endl;
+      cerr << "  (" << hostname << "," << port << ")" << endl;
+      continue;
+    } else {
+      break;
+    }
+  }
 
-  status = connect(ringmaster_fd, host_info_list->ai_addr,
-                   host_info_list->ai_addrlen);
-  if (status == -1) {
-    cerr << "Error: cannot connect to socket" << endl;
-    cerr << "  (" << ringmaster_hostname << "," << ringmaster_port << ")"
-         << endl;
-    return -1;
-  } // if
   return ringmaster_fd;
 }
 
