@@ -67,6 +67,9 @@ int main(int argc, char const *argv[]) {
   int active_fd = select_active_fd(readfds, nfds, player_fd_vector);
   string trace = recv_trace(active_fd);
   cout << "Trace of potato:" << endl << trace.substr(1) << endl;
+  for (auto fd : player_fd_vector) {
+    close(fd);
+  }
   return 0;
 }
 
