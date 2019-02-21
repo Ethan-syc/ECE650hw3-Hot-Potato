@@ -1,5 +1,6 @@
 #include "ringmaster.h"
 #include "utility.h"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -22,6 +23,13 @@ int main(int argc, char const *argv[]) {
   int num_hops = atoi(argv[3]);
   cout << "num_players is :" << num_players << endl;
   cout << "num_hops is :" << num_hops << endl;
+  if (num_players <= 1 || num_hops < 0 || num_hops > 512) {
+    cout << "num_players must be greater than 1 and num_hops must be greater "
+            "than or equal to zero "
+            " and less than or "
+            "equal to 512 "
+         << endl;
+  }
   int socket_fd = listen_to_port(hostname, ringmaster_listen_port);
   struct sockaddr_storage socket_addr;
   socklen_t socket_addr_len = sizeof(socket_addr);
@@ -50,10 +58,24 @@ int main(int argc, char const *argv[]) {
     pair<string, string> player_host_port_pair{hostname_str, port_str};
     player_host_port_vector.push_back(player_host_port_pair);
   }
-
+  close(socket_fd);
   send_player_info_to_neighbor(player_fd_vector, player_host_port_vector);
-  while (1)
+  int start_player_id = start_game(player_fd_vector, num_players, num_hops);
+  cout << "start player id is " << start_player_id << endl;
+  int nfds = *max_element(player_fd_vector.begin(), player_fd_vector.end());
+  fd_set readfds;
+  int active_fd = select_active_fd(readfds, nfds, player_fd_vector);
+  string trace = recv_trace(active_fd);
+  cout << "Trace of potato:" << endl << trace.substr(1) << endl;
   return 0;
+}
+
+int start_game(const vector<int> &player_fd_vector, const int num_players,
+               const int num_hops) {
+  srand((unsigned int)time(NULL));
+  int random = rand() % num_players;
+  send_int(player_fd_vector[random], 0); // control-sig, 0 menas game starts
+  send_int(player_fd_vector[random], num_hops);
 }
 
 void send_player_info_to_neighbor(
@@ -68,14 +90,15 @@ void send_player_info_to_neighbor(
     cout << hostname << " " << port << endl;
     send_all(player_fd_vector[i - 1], hostname, sizeof(hostname));
     send_all(player_fd_vector[i - 1], port, sizeof(port));
+    send_int(player_fd_vector[i - 1], player_fd_vector.size());
   }
   char hostname[512];
   strncpy(hostname, player_host_port_vector[0].first.c_str(), sizeof(hostname));
   char port[512];
   strncpy(port, player_host_port_vector[0].second.c_str(), sizeof(port));
-  cout << hostname << " " << port << endl;
   send_all(player_fd_vector.back(), hostname, sizeof(hostname));
   send_all(player_fd_vector.back(), port, sizeof(port));
+  send_int(player_fd_vector.back(), player_fd_vector.size());
 }
 
 int listen_to_port(const char *hostname, const char *ringmaster_listen_port) {
@@ -122,5 +145,6 @@ int listen_to_port(const char *hostname, const char *ringmaster_listen_port) {
     return -1;
   }
   cout << "Waiting for connection on port " << ringmaster_listen_port << endl;
+  freeaddrinfo(host_info_list);
   return socket_fd;
 }
