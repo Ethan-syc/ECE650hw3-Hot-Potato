@@ -76,6 +76,7 @@ int start_game(const vector<int> &player_fd_vector, const int num_players,
   int random = rand() % num_players;
   send_int(player_fd_vector[random], 0); // control-sig, 0 menas game starts
   send_int(player_fd_vector[random], num_hops);
+  return random;
 }
 
 void send_player_info_to_neighbor(
